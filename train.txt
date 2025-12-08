@@ -1,0 +1,76 @@
+I had the pleasure of presenting some of the recent work on behalf of the @Tesla_AI team at the International Conference of Computer Vision this week. In this abridged version of the talk, we will go over some of the essentials of Tesla's approach to solving autonomy.
+As many of you know, Tesla utilizes an end-to-end neural network to achieve self-driving. This end-to-end neural network consumes pixels from the various cameras, kinematic signals (such as the vehicle speed), audio, maps and navigation to produce the control commands that drive the car.
+Why end-to-end?
+Even though Tesla strongly believes in end-to-end neural networks, it is by no means the consensus approach to self-driving. Most other entities developing self-driving have a sensor-heavy, modular approach to driving. While such systems may be easier to develop and debug in the beginning, there are several complexities with such a system. The end-to-end approach offers several benefits over that baseline. To name a few:
+Codifying human values is incredibly difficult. It is easier to learn them from data.
+Interface between perception, prediction and planning is ill-defined. In end-to-end, the gradients flow all the way from controls to sensor inputs, thus optimizing the entire network holistically.
+Easily scalable to handle the fat and long tail of real-world robotics.
+Homogenous compute with deterministic latency.
+Overall, on the correct side of scaling w.r.t. the bitter lesson.
+Here are a few examples that illustrate this.
+Example 1:
+In the below example, the AI needs to decide between going over the large puddle or entering the oncoming lane. Typically, entering oncoming lanes can be very bad and potentially dangerous. However, in this situation there's enough visibility to know that there wouldn't be an oncoming car in the foreseeable future. Secondly, that the puddle is rather large and is better avoided. Such trade-offs cannot be easily written down in traditional programming logic, whereas it's rather straightforward for a human looking at the scene. 
+
+Example 1 for why end-to-end. Video from https://x.com/AIDRIVR/status/1760841783708418094
+The classic trolley problem is conventionally considered as a rare problem that self-driving cars would seldom face. However, the opposite is what's true. Self-driving cars are constantly subject to mini-trolley problems such as the one above. By training on human data, the robots learn values that are aligned with what humans value.
+Example 2:
+It's hard to have a clear interface between "perception" and "planning". In the below two clips, in one the chickens want to cross the road and in the other the geese just want to hang out. It is quite difficult to create an ontology for this between these modular blocks. This kind of soft intent is best communicated in an end-to-end latent fashion instead.
+
+FSD understands the intent of the chickens crossing the road
+https://x.com/SnowmanSmasher/status/1772041984049631308
+
+FSD also understands that the geese want to stay still and goes around
+https://x.com/chazman/status/1840147155744632892
+For all these reasons, and more, Tesla uses an end-to-end architecture for self-driving. That said, there are a lot of challenges to overcome for one to produce such a system. We will discuss a few of the challenges next.
+1. Curse of dimensionality
+Safely operating in the real-world requires high-frame-rate, high-resolution, long context inputs to be processed. If we made some reasonable assumptions for "input token" size, say a 5x5 pixel patch, we would end up with the following number of tokens.
+7 cameras x 36 FPS x 5 Megapixels x 30s history / (5x5 pixel patch)
+Navigation maps and route for next few miles
+100 Hz kinematic data such as speed, IMU, odometry, etc
+48 KHz audio data
+This amounts to around 2 billion input tokens. The neural network needs to learn the correct causal mapping that reduces these 2 billion tokens down to 2 tokens, the next steering and acceleration of the vehicle. Learning the correct causation for this without learning spurious correlations is an extremely tricky problem.
+Luckily, Tesla has access to the Niagara Falls of data with its fleet of vehicles. The fleet can collectively produce the equivalent of 500 years of driving every single day.  Not all data is interesting, nor is it practical to ingest everything. Hence, Tesla uses sophisticated data engine pipelines to curate the most interesting, diverse and high-quality data samples. Below is a small set of what such data might look like.
+0:00 / 0:27
+Training data curated from the entire fleet
+If you train on such data, you get extreme generalization to corner cases that is otherwise difficult to achieve. Here's one example of how the AI model has learnt to proactively avoid a possible collision. The impressive thing in the video is that the AI reacts around the 5-second mark when it's far from obvious that the situation could escalate into a collision. The AI needs to understand that it's drizzling outside, the lead vehicle is probably spinning out, it might hit the barrier and then ricochet back into the path of the ego vehicle and hence it's prudent to brake now. Only a very capable AI system can predict such second order effects that much in advance.
+0:00 / 0:22
+Self-driving proactively avoiding a potential collision
+2. Interpretability and safety guarantees
+Debugging such an end-to-end system could be difficult if and when the vehicle doesn't behave as expected. In practice, this is not a huge problem since the model can also produce interpretable intermediate tokens. These intermediate tokens can also be used as reasoning tokens depending on the situation.
+Full architecture with interpretable outputs
+One such task is Tesla's Generative Gaussian Splatting. While 3D Gaussian Splatting has made large strides in computer vision in recent years, it depends on camera views with large baseline for good performance. Typical vehicle motion, unfortunately, is quite linear, and running traditional Gaussian Splatting results in poor reconstruction quality, especially from novel viewpoints. These 3D Gaussian Splats also require good initialization from other pipelines and the total optimization time can be on the order of 10s of minutes.
+Tesla's Generative Gaussian Splatting on the other hand has great generalization, runs in ~220 ms, doesn't require initialization, can model dynamic objects and can be jointly trained with the end-to-end AI model. It's notable that all of these gaussians are generated based on the production vehicle configuration's cameras.
+0:00 / 0:14
+Novel view rendering of Gaussian Splats produced by Tesla's neural networks
+
+Tesla's generative gaussians (bottom) produced from the camera videos (top row)
+In addition to 3D geometry, reasoning can be done in natural language along with video grounding. A small version of this reasoning model is already running in the FSD v14.x release.
+Natural language reasoning
+3. Evaluation
+The last and most difficult challenge is the evaluation. Even with a high quality dataset, loss on open-loop predictions might not correlate to great performance in the real-world. The evaluation needs to be diverse and mode covering to allow for fast development iteration. This work is tedious and a tremendous amount of effort goes into producing high signal-to-noise ratio in the evaluation metrics.
+This is why, at Tesla, we have developed a neural world simulator. This simulator is trained on the same massive dataset that we have curated. However, instead of predicting the actions given state, the neural world sim synthesizes future state given current state and next action. This can then be connected together with the agent or the policy AI models to run in a closed-loop fashion to evaluate the performance.
+Neural net closed loop simulation
+The world simulator is trained entirely by Tesla to produce all of the vehicle's cameras and other sensor data. It is causal, and responds to commands of the driving policy model. It is fast and yet is able to synthesize high-resolution, high-frame-rate, and high-quality sensor data. 
+Here's an example minute-long rollout of the model of this neural simulator.
+0:00 / 1:16
+Generated video from Tesla's neural world sim model
+(Top row is front facing cameras, middle is side, bottom is rear)
+Such simulation can be used to validate newer driving models against historical data.
+0:00 / 0:05
+Starting from the same initial video snippet (small green square) the simulation diverges to different states based on the new set of actions
+In addition, we can also synthetically create new adversarial scenarios to test additional corner case situations.
+
+Starting from the same initial videos, the vehicle in the simulation can be made to act in an adversarial manner
+By adjusting the amount of test-time compute used, the same model can simulate the world in real-time. Below is an example, where a person is able to drive around for more than 6 minutes with a neural network synthetically producing the frames of all 8 cameras with 24 frames per second. You can notice that the details are quite realistic over even such long generation.
+
+Tesla's neural world simulator based driving video game
+The great thing about all the above points is that, they not just solve for vehicle autonomy, but also seamlessly transfer to Optimus, the Tesla humanoid robot. Here's an example of such transfer.
+The same video generation models also work for Optimus robots navigating the Tesla gigafactory.
+0:00 / 0:08
+Optimus navigating in the Tesla neural net world simulator
+0:00 / 0:09
+Different Optimus actions are accurately reflected in the world sim
+Obviously, all of the video generation above is not limited to evaluation. It can be used to perform large-scale reinforcement learning in closed-loop to achieve superhuman performance.
+Join us
+Tesla is THE place to solve real-world robotics. The team is extremely talented, determined and motivated. The technology that is already developed is cutting-edge and the roadmap is exhilarating. The work done here will tremendously benefit all of humanity. Hence, we believe that this is the best place to work on AI in the entire planet currently.  Join us and let's bring millions of intelligent, friendly and useful robots to life.
+tesla.com/AI

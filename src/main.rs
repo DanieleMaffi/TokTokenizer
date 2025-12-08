@@ -1,11 +1,9 @@
-mod tokenizer;
-
+use toktokenizer::tokenizer::{BasicTokenizer, Tokenize};
 
 fn main() {
-    let a = b"ciao";
-    println!("{a:?}");
-    for b in a {
-        print!("{b:08b} ");
-    }
+    let mut tknzr = BasicTokenizer::new();
+    let text = std::fs::read_to_string("train.txt").expect("Failed to read file");
+    tknzr.train(&text, 500, true);
+    tknzr.save("vocab.model", "merges.txt").expect("Could not save tokenizer");
 }
 
